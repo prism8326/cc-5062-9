@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>idxpaint 像素级索引查看器</title>
+<style>
+  body { font-family: monospace; margin: 16px; background: #1b1d24; color: #d8dae0; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  canvas { image-rendering: pixelated; border: 1px solid #444; background:
+    repeating-conic-gradient(#2a2d36 0% 25%, #23252d 0% 50%) 0 0 / 16px 16px; }
+  #overlay { position: absolute; pointer-events: none; }
+  #stage { position: relative; display: inline-block; }
+  table { border-collapse: collapse; font-size: 11px; }
+  td { border: 1px solid #333; padding: 2px 6px; }
+  input[type=file] { color: #d8dae0; }
+  button { background: #333845; color: #eee; border: 1px solid #555; padding: 4px 10px;
+           border-radius: 4px; cursor: pointer; }
+  button:hover { background: #404757; }
+  #info { min-height: 3.2em; white-space: pre; }
+  .swatch { display: inline-block; width: 12px; height: 12px; border: 1px solid #888;
+            vertical-align: middle; margin-right: 4px; }
+  #palette td:nth-child(1) { text-align: right; color: #9fb4ff; }
+</style>
+</head>
+<body>
+<h3>索引色画布 · 像素级查看器</h3>
+<div class="row">
+  <input id="file" type="file" accept=".json,application/json">
+  <label>缩放 <input id="zoom" type="range" min="1" max="16" value="8"></label>
+  <span id="zoomLabel">8x</span>
+  <label><input id="showIndex" type="checkbox" checked> 显示索引数字</label>
+  <label><input id="checker" type="checkbox" checked> 透明棋盘格</label>
+  <button id="loadDemo">载入内置示例</button>
+</div>
+<div id="stage">
+  <canvas id="view"></canvas>
+  <canvas id="overlay"></canvas>
+</div>
+<div id="info">尚未载入项目。选择 .idx.json 文件，或点击“载入内置示例”。</div>
+<h4>调色板（索引 → RGBA）</h4>
+<table id="palette"></table>
+
+<script>
+"use strict";
+let project = null;
+let zoom = 8;
+
+const $ = (id) => document.getElementById(id);
+const view = $("view"), overlay = $("overlay");
+const ctx = view.getContext("2d"), octx = overlay.getContext("2d");
+
+function decodeIndices(base64, count) {
+  const bin = atob(base64);
+  const out = new Uint8Array(count);
+  for (let i = 0; i < count; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function cssColor(entry) {
+  return `rgba(${entry.r},${entry.g},${entry.b},${(entry.a / 255).toFixed(3)})`;
+}
+
+function loadProject(data) {
+  const expected = data.width * data.height;
+  data.indices = decodeIndices(data.indices_base64, expected);
+  project = data;
+  render();
+  renderPalette();
+}
+
+function render() {
+  if (!project) return;
+  const { width: w, height: h, palette, indices, transparent_index } = project;
+  view.width = overlay.width = w * zoom;
+  view.height = overlay.height = h * zoom;
+  octx.clearRect(0, 0, overlay.width, overlay.height);
+
+  // One fillRect per source pixel: integer scaling, never interpolated.
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const e = palette[indices[y * w + x]];
+      ctx.fillStyle = cssColor(e);
+      ctx.fillRect(x * zoom, y * zoom, zoom, zoom);
+    }
+  }
+
+  if ($("showIndex").checked && zoom >= 6) {
+    octx.font = `${Math.max(7, Math.floor(zoom * 0.42))}px monospace`;
+    octx.textAlign = "center";
+    octx.textBaseline = "middle";
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const idx = indices[y * w + x];
+        const e = palette[idx];
+        const lum = (e.r + e.g + e.b) / 3;
+        octx.fillStyle = lum > 140 && e.a > 128 ? "rgba(0,0,0,.75)" : "rgba(255,255,255,.85)";
+        octx.fillText(idx.toString(16), x * zoom + zoom / 2, y * zoom + zoom / 2);
+      }
+    }
+  }
+  view.style.background = $("checker").checked ? "" : "#000";
+}
+
+function renderPalette() {
+  const tbl = $("palette");
+  tbl.innerHTML = "";
+  project.palette.forEach((e, i) => {
+    const tr = document.createElement("tr");
+    const lock = project.locked_indices.includes(i) ? " 🔒" : "";
+    const trans = i === project.transparent_index ? " (透明索引)" : "";
+    tr.innerHTML =
+      `<td>${i}${lock}${trans}</td>` +
+      `<td><span class="swatch" style="background:${cssColor(e)}"></span></td>` +
+      `<td>(${e.r}, ${e.g}, ${e.b}, ${e.a})</td>` +
+      `<td>${e.name ?? ""}</td>`;
+    tbl.appendChild(tr);
+  });
+}
+
+view.addEventListener("mousemove", (ev) => {
+  if (!project) return;
+  const rect = view.getBoundingClientRect();
+  const x = Math.floor((ev.clientX - rect.left) / zoom);
+  const y = Math.floor((ev.clientY - rect.top) / zoom);
+  if (x < 0 || y < 0 || x >= project.width || y >= project.height) return;
+  const idx = project.indices[y * project.width + x];
+  const e = project.palette[idx];
+  $("info").textContent =
+    `坐标 (${x}, ${y})\n索引: ${idx} (0x${idx.toString(16)})` +
+    `${idx === project.transparent_index ? "  [透明索引]" : ""}` +
+    `${project.locked_indices.includes(idx) ? "  [锁色]" : ""}\n` +
+    `RGBA: (${e.r}, ${e.g}, ${e.b}, ${e.a})  名称: ${e.name ?? ""}`;
+});
+
+$("zoom").addEventListener("input", (ev) => {
+  zoom = parseInt(ev.target.value, 10);
+  $("zoomLabel").textContent = zoom + "x";
+  render();
+});
+$("showIndex").addEventListener("change", render);
+$("checker").addEventListener("change", render);
+
+$("file").addEventListener("change", async (ev) => {
+  const f = ev.target.files[0];
+  if (!f) return;
+  loadProject(JSON.parse(await f.text()));
+});
+
+$("loadDemo").addEventListener("click", () => loadProject(DEMO_PROJECT));
+</script>
+<script src="demo_data.js"></script>
+</body>
+</html>
