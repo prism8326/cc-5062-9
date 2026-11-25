@@ -83,3 +83,77 @@ class Palette:
             else:
                 entries.append(PaletteEntry(c[0], c[1], c[2], c[3]))
         return Palette(entries)
+
+    def snapshot(self) -> "PaletteSnapshot":
+        return PaletteSnapshot(tuple(self.entries()))
+
+    def export_mapping(self) -> dict[int, tuple[int, int, int, int]]:
+        """Return the stable index -> RGBA mapping used by export."""
+        return {i: e.rgba for i, e in enumerate(self._entries)}
+
+
+@dataclass(frozen=True)
+class PaletteSnapshot:
+    """Immutable palette entries for undo and before/after comparisons."""
+
+    entries: tuple[PaletteEntry, ...]
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+    def to_palette(self) -> Palette:
+        return Palette(list(self.entries))
+
+    def export_mapping(self) -> dict[int, tuple[int, int, int, int]]:
+        return {i: e.rgba for i, e in enumerate(self.entries)}
+
+
+class PaletteView:
+    """Display/export adapter for a :class:`Palette`.
+
+    Painting code should keep using indices and Ramp.  This adapter is the
+    boundary that turns those indices into CSS/RGBA or an export table.
+    """
+
+    def __init__(self, palette: Palette | PaletteSnapshot):
+        self.palette = palette
+
+    @property
+    def entries(self):
+        return self.palette.entries if isinstance(self.palette, Palette) else self.palette.entries
+
+    def rgba(self, index: int) -> tuple[int, int, int, int]:
+        entries = self.entries() if callable(self.entries) else self.entries
+        return entries[index].rgba
+
+    def css_color(self, index: int) -> str:
+        r, g, b, a = self.rgba(index)
+        return f"rgba({r}, {g}, {b}, {a / 255:.3f})"
+
+    def export_mapping(self) -> dict[int, tuple[int, int, int, int]]:
+        if isinstance(self.palette, Palette):
+            return self.palette.export_mapping()
+        return self.palette.export_mapping()
+
+    def ramp_colors(self, ramp) -> list[tuple[int, int, int, int]]:
+        """Map a colour ladder's palette indices to display colours."""
+        return [self.rgba(index) for index in ramp.indices]
+
+
+# Descriptive alias: this object is the palette display boundary.
+PaletteDisplay = PaletteView
+
+
+def export_mapping(source) -> dict[int, tuple[int, int, int, int]]:
+    """Return an index -> RGBA export mapping from a canvas or palette."""
+    if hasattr(source, "export_palette_mapping"):
+        return source.export_palette_mapping()
+    if hasattr(source, "export_mapping"):
+        return source.export_mapping()
+    if isinstance(source, PaletteView):
+        return source.export_mapping()
+    raise TypeError("source must be an IndexedCanvas, Palette or PaletteView")
+
+
+def build_export_mapping(source) -> dict[int, tuple[int, int, int, int]]:
+    return export_mapping(source)

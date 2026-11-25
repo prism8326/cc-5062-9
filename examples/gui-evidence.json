@@ -1,0 +1,53 @@
+{
+  "status": "passed",
+  "browser": "chromium/playwright",
+  "first_gradient": {
+    "distinct": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
+    "nonTransparent": 188
+  },
+  "dither_gradient_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "final_distinct_indices": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+  ],
+  "undo_mapping": {
+    "0": 7,
+    "1": 6,
+    "2": 5,
+    "3": 4,
+    "4": 3,
+    "5": 2,
+    "6": 1,
+    "7": 0
+  },
+  "undo_restores_indices": true,
+  "undo_restores_next_row_diffusion": true,
+  "indexed_png_bytes": 1685,
+  "canvas_image": "examples/gui-canvas-evidence.png",
+  "invalid_input_error_shown": "索引绘画界面异常：canvas dimensions must be positive integers",
+  "page_errors": []
+}

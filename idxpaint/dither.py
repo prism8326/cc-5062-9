@@ -62,3 +62,36 @@ FLOYD_STEINBERG = [
     (0, 1, 5 / 16),
     (1, 1, 1 / 16),
 ]
+
+
+class DitherDecision:
+    """Pure index/error decision boundary shared by painting front ends.
+
+    It knows about coordinate-anchored ordered thresholds and finite ramps,
+    but not about canvas storage, palettes or UI frameworks.
+    """
+
+    def __init__(self, order: int = 3):
+        self.ordered_dither = OrderedDither(order)
+
+    def threshold(self, x: int, y: int) -> float:
+        return self.ordered_dither.threshold(x, y)
+
+    def ordered_coordinate(self, position: float, x: int, y: int) -> int:
+        return self.ordered_dither.pick(position, x, y)
+
+    def ordered_index(self, ramp, position: float, x: int, y: int) -> int:
+        return ramp.at(self.ordered_coordinate(position, x, y))
+
+    def diffusion_step(
+        self, ramp, position: float, residual: float = 0.0
+    ) -> tuple[int, int, float]:
+        """Return ``(palette_index, ramp_coordinate, quantization_error)``."""
+        corrected = position + residual
+        coordinate = max(0, min(round(corrected), ramp.steps - 1))
+        index = ramp.at(coordinate)
+        return index, coordinate, corrected - coordinate
+
+
+DitherPlanner = DitherDecision
+DitherStrategy = DitherDecision

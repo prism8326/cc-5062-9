@@ -1,72 +1,57 @@
-"""Indexed pixel canvas.
+"""Indexed pixel canvas with its palette mapping attached.
 
-The canvas stores palette *indices* only -- a flat bytearray of values in
-``[0, len(palette))``.  No RGB buffer ever exists, so painting cannot secretly
-quantize a full-colour image: a brush must decide a concrete palette index for
-every pixel it touches.
+The pixel matrix itself is implemented by :class:`idxpaint.index_canvas.IndexCanvas`.
+This subclass keeps the historical ``IndexedCanvas(width, height, palette)``
+entry point and attaches the palette responsible for displaying/exporting
+indices.  No RGB framebuffer is ever stored here.
 """
 
 from __future__ import annotations
 
+from .index_canvas import IndexCanvas as _IndexCanvas
 from .palette import Palette
 
 
-class IndexedCanvas:
+class IndexedCanvas(_IndexCanvas):
     def __init__(self, width: int, height: int, palette: Palette,
                  transparent_index: int = 0, fill_index: int | None = None):
-        if width <= 0 or height <= 0:
-            raise ValueError("canvas dimensions must be positive")
         if not 0 <= transparent_index < len(palette):
             raise ValueError("transparent_index outside palette")
-        self.width = width
-        self.height = height
-        self.palette = palette
-        self.transparent_index = transparent_index
         fill = transparent_index if fill_index is None else fill_index
         if not 0 <= fill < len(palette):
             raise ValueError("fill_index outside palette")
-        self._pixels = bytearray([fill]) * (width * height)
-        # Entries that painting may never overwrite (palette-lock).
-        self.locked_indices: set[int] = set()
-        # Optional per-pixel protection mask; coordinate -> True means locked.
-        self.pixel_locks: set[tuple[int, int]] = set()
-
-    # -- storage -----------------------------------------------------------
-    def get_index(self, x: int, y: int) -> int:
-        return self._pixels[y * self.width + x]
-
-    def set_index(self, x: int, y: int, index: int) -> None:
-        self._pixels[y * self.width + x] = index
-
-    def raw_indices(self) -> bytearray:
-        return self._pixels
-
-    def indices_copy(self) -> bytearray:
-        return bytearray(self._pixels)
-
-    def in_bounds(self, x: int, y: int) -> bool:
-        return 0 <= x < self.width and 0 <= y < self.height
-
-    def is_locked(self, x: int, y: int) -> bool:
-        return (self.get_index(x, y) in self.locked_indices
-                or (x, y) in self.pixel_locks)
-
-    # -- semantics ---------------------------------------------------------
-    def distinct_indices(self) -> set[int]:
-        return set(self._pixels)
+        super().__init__(
+            width,
+            height,
+            transparent_index=transparent_index,
+            fill_index=fill,
+            color_count=len(palette),
+        )
+        self.palette = palette
 
     def remap(self, mapping: dict[int, int]) -> None:
-        """Rewrite stored indices through *mapping* (palette reorder support)."""
-        out = bytearray(len(self._pixels))
-        for i, v in enumerate(self._pixels):
-            out[i] = mapping.get(v, v)
-        self._pixels = out
-        self.transparent_index = mapping.get(self.transparent_index,
-                                             self.transparent_index)
-        self.locked_indices = {mapping.get(v, v) for v in self.locked_indices}
+        for new_index in mapping.values():
+            if not 0 <= new_index < len(self.palette):
+                raise ValueError("palette mapping points outside palette")
+        super().remap(mapping)
 
     def replace_palette(self, palette: Palette, index_mapping: dict[int, int] | None = None) -> None:
         """Attach a reordered/edited palette, optionally remapping pixels."""
-        if index_mapping is not None:
-            self.remap(index_mapping)
+        old_color_count = self.color_count
+        self.color_count = len(palette)
+        try:
+            if index_mapping is not None:
+                self.remap(index_mapping)
+            else:
+                out_of_range = [v for v in self._pixels if v >= len(palette)]
+                if out_of_range:
+                    raise ValueError("existing indices are outside replacement palette")
+                if self.transparent_index >= len(palette):
+                    raise ValueError("transparent_index outside replacement palette")
+        except Exception:
+            self.color_count = old_color_count
+            raise
         self.palette = palette
+
+    def export_palette_mapping(self) -> dict[int, tuple[int, int, int, int]]:
+        return {i: entry.rgba for i, entry in enumerate(self.palette)}

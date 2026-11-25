@@ -17,13 +17,19 @@ from __future__ import annotations
 
 from .brush import AlphaPolicy, Brush, LockPolicy, ordered_index, ramp_position
 from .canvas import IndexedCanvas
+from .diffusion import DiffusionCursor, ErrorSnapshot
+from .dither import DitherDecision
 
 
 class PaintEngine:
     def __init__(self, canvas: IndexedCanvas, brush: Brush):
         self.canvas = canvas
         self.brush = brush
-        self._error: dict[tuple[int, int], float] = {}
+        # Independent error-propagation cursor.  Its snapshots can be paired
+        # with index snapshots by undo, but residuals are not stored in canvas.
+        self.diffusion_cursor = DiffusionCursor()
+        self.error_cursor = self.diffusion_cursor
+        self._decisions = DitherDecision(brush.dither_order)
         # When set, diffusion is clipped to this rectangle; residuals that
         # would leave it are absorbed at the boundary instead of painting
         # pixels outside the requested region.
@@ -32,6 +38,28 @@ class PaintEngine:
         # the same cumulative arc length as a one-shot polyline.
         self._last_point: tuple[float, float, float] | None = None
         self._arc_length: float = 0.0
+
+    @property
+    def _error(self) -> dict[tuple[int, int], float]:
+        return self.diffusion_cursor.errors
+
+    @_error.setter
+    def _error(self, value: dict[tuple[int, int], float]) -> None:
+        self.diffusion_cursor.errors = dict(value)
+
+    @property
+    def _region(self) -> tuple[int, int, int, int] | None:
+        return self.diffusion_cursor.region
+
+    @_region.setter
+    def _region(self, value: tuple[int, int, int, int] | None) -> None:
+        self.diffusion_cursor.region = value
+
+    def snapshot_errors(self) -> ErrorSnapshot:
+        return self.diffusion_cursor.snapshot()
+
+    def restore_errors(self, snapshot: ErrorSnapshot) -> None:
+        self.diffusion_cursor.restore(snapshot)
 
     def reset_stroke(self) -> None:
         self._last_point = None
@@ -138,16 +166,9 @@ class PaintEngine:
             return None
 
     def _diffuse(self, x: int, y: int, residual: float) -> None:
-        from .dither import FLOYD_STEINBERG
-        for dx, dy, w in FLOYD_STEINBERG:
-            if dy == 0 and dx <= 0:
-                continue
-            nx, ny = x + dx, y + dy
-            if self._region is not None:
-                x0, y0, x1, y1 = self._region
-                if not (x0 <= nx <= x1 and y0 <= ny <= y1):
-                    continue  # absorb at the region boundary
-            self._error[(nx, ny)] = self._error.get((nx, ny), 0.0) + residual * w
+        self.diffusion_cursor.propagate(
+            x, y, residual, targets=None, region=self._region
+        )
 
     def _process_cell(self, x: int, y: int,
                       targets: dict[tuple[int, int], tuple[float, float, float, float]]) -> None:
@@ -176,8 +197,9 @@ class PaintEngine:
             return
 
         corrected = position + residual
-        k = max(0, min(round(corrected), ramp.steps - 1))
-        ink = ramp.at(k)
+        ink, k, _rounding_error = self._decisions.diffusion_step(
+            ramp, position, residual
+        )
         chosen = self._alpha_gate(x, y, coverage, ink, (cx, cy))
         self.canvas.set_index(x, y, chosen)
         # Only diffuse the rounding error to cells that are themselves part of
@@ -188,18 +210,9 @@ class PaintEngine:
         self._diffuse_targets(x, y, corrected - virtual, targets)
 
     def _diffuse_targets(self, x: int, y: int, residual: float, targets) -> None:
-        from .dither import FLOYD_STEINBERG
-        for dx, dy, w in FLOYD_STEINBERG:
-            if dy == 0 and dx <= 0:
-                continue
-            nx, ny = x + dx, y + dy
-            if (nx, ny) not in targets:
-                continue
-            if self._region is not None:
-                x0, y0, x1, y1 = self._region
-                if not (x0 <= nx <= x1 and y0 <= ny <= y1):
-                    continue
-            self._error[(nx, ny)] = self._error.get((nx, ny), 0.0) + residual * w
+        self.diffusion_cursor.propagate(
+            x, y, residual, targets=targets, region=self._region
+        )
 
     def paint_error_diffusion(
         self,
@@ -259,7 +272,7 @@ class PaintEngine:
         return self.canvas.distinct_indices() - before
 
     def reset_diffusion(self) -> None:
-        self._error.clear()
+        self.diffusion_cursor.clear()
 
 
 def boundary_stripe_pollution(before: IndexedCanvas, after: IndexedCanvas,

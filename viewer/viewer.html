@@ -2,152 +2,139 @@
 <html lang="zh">
 <head>
 <meta charset="utf-8">
-<title>idxpaint 像素级索引查看器</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>idxpaint 索引色绘画窗口</title>
 <style>
-  body { font-family: monospace; margin: 16px; background: #1b1d24; color: #d8dae0; }
-  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+  body { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 16px; background: #1b1d24; color: #d8dae0; }
+  h3, h4 { margin: 8px 0; }
+  .panel { background: #22252e; border: 1px solid #353a48; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .row:last-child { margin-bottom: 0; }
+  label { white-space: nowrap; }
   canvas { image-rendering: pixelated; border: 1px solid #444; background:
-    repeating-conic-gradient(#2a2d36 0% 25%, #23252d 0% 50%) 0 0 / 16px 16px; }
-  #overlay { position: absolute; pointer-events: none; }
-  #stage { position: relative; display: inline-block; }
+    repeating-conic-gradient(#2a2d36 0% 25%, #23252d 0% 50%) 0 0 / 16px 16px; touch-action: none; }
+  #overlay { position: absolute; inset: 0; pointer-events: none; }
+  #stage { position: relative; display: inline-block; line-height: 0; }
   table { border-collapse: collapse; font-size: 11px; }
-  td { border: 1px solid #333; padding: 2px 6px; }
-  input[type=file] { color: #d8dae0; }
-  button { background: #333845; color: #eee; border: 1px solid #555; padding: 4px 10px;
-           border-radius: 4px; cursor: pointer; }
-  button:hover { background: #404757; }
-  #info { min-height: 3.2em; white-space: pre; }
+  td, th { border: 1px solid #333; padding: 2px 6px; }
+  #palette tr { cursor: pointer; }
+  #palette tr.selected-ink { outline: 2px solid #9fb4ff; background: #2d3550; }
+  input[type=file] { color: #d8dae0; max-width: 260px; }
+  input[type=number] { width: 64px; background: #181a20; color: #eee; border: 1px solid #555; border-radius: 4px; padding: 3px; }
+  select { background: #333845; color: #eee; border: 1px solid #555; border-radius: 4px; padding: 3px 6px; }
+  button { background: #333845; color: #eee; border: 1px solid #555; padding: 5px 10px;
+           border-radius: 4px; cursor: pointer; font-family: inherit; }
+  button:hover:not(:disabled) { background: #404757; }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { border-color: #7f97ff; background: #34406a; }
+  #info { min-height: 3.2em; white-space: pre-wrap; }
+  #status { min-height: 1.4em; color: #aeb9e8; }
+  #error { color: #ffb4b4; background: #4a2028; border: 1px solid #a64555; padding: 8px;
+           border-radius: 6px; white-space: pre-wrap; margin: 8px 0; }
   .swatch { display: inline-block; width: 12px; height: 12px; border: 1px solid #888;
             vertical-align: middle; margin-right: 4px; }
   #palette td:nth-child(1) { text-align: right; color: #9fb4ff; }
+  #evidence { max-height: 260px; overflow: auto; background: #15171d; border: 1px solid #333;
+              border-radius: 6px; padding: 8px; font-size: 11px; max-width: 980px; }
+  .hint { color: #a8adba; font-size: 12px; }
 </style>
 </head>
 <body>
-<h3>索引色画布 · 像素级查看器</h3>
-<div class="row">
-  <input id="file" type="file" accept=".json,application/json">
-  <label>缩放 <input id="zoom" type="range" min="1" max="16" value="8"></label>
-  <span id="zoomLabel">8x</span>
-  <label><input id="showIndex" type="checkbox" checked> 显示索引数字</label>
-  <label><input id="checker" type="checkbox" checked> 透明棋盘格</label>
-  <button id="loadDemo">载入内置示例</button>
+<h3>索引色画布 · 绘画 / 抖色 / 导出窗口</h3>
+
+<div class="panel">
+  <div class="row">
+    <label>色表
+      <select id="paletteTableSelect" aria-label="选择色表">
+        <option value="demo" selected>demo：透明 + 阶梯/重色索引</option>
+        <option value="grayscale">grayscale：灰度阶梯</option>
+        <option value="sepia">sepia：褐色阶梯</option>
+        <option value="spectrum">spectrum：光谱阶梯</option>
+      </select>
+    </label>
+    <label>工具
+      <select id="tool">
+        <option value="brush">画笔（拖动）</option>
+        <option value="gradient" selected>渐变线（拖出压力 0→1）</option>
+      </select>
+    </label>
+    <label>抖色决策
+      <select id="ditherMode">
+        <option value="ordered" selected>ordered：坐标锚定 Bayer</option>
+        <option value="diffusion">diffusion：误差传播</option>
+      </select>
+    </label>
+    <label>颜色阶梯
+      <select id="rampPreset">
+        <option value="ladder" selected>Ramp(1,2,3,4)</option>
+        <option value="full">Ramp(1..7)</option>
+        <option value="ink">当前点选索引</option>
+        <option value="transparent">透明索引（橡皮）</option>
+      </select>
+    </label>
+  </div>
+  <div class="row">
+    <label>半径 <input id="radius" type="range" min="0.6" max="6" step="0.1" value="2"></label>
+    <label>压力 <input id="pressure" type="range" min="0" max="1" step="0.05" value="0.8"></label>
+    <label>柔边 <input id="softEdge" type="range" min="0" max="1" step="0.05" value="0"></label>
+    <label>Alpha
+      <select id="alphaPolicy">
+        <option value="dither" selected>dither</option>
+        <option value="keep">keep transparent</option>
+        <option value="overwrite">overwrite</option>
+      </select>
+    </label>
+  </div>
+  <div class="row">
+    <button id="drawGradient" class="primary" type="button">画横向渐变</button>
+    <button id="drawBothGradients" type="button">画 ordered + diffusion 对照</button>
+    <button id="undo" type="button">撤销（索引 + 下一行残差）</button>
+    <button id="reversePalette" type="button">前后差分：反转并重排色表</button>
+    <button id="exportProject" type="button">导出索引工程 .idx.json</button>
+    <button id="exportPng" type="button">导出索引 PNG</button>
+    <button id="exportMapping" type="button">导出映射 JSON</button>
+  </div>
+  <div class="row">
+    <input id="file" type="file" accept=".json,application/json">
+    <button id="loadDemo" type="button">载入内置旧作品示例</button>
+    <label>新建宽 <input id="newWidth" type="number" min="1" max="256" value="48"></label>
+    <label>高 <input id="newHeight" type="number" min="1" max="256" value="32"></label>
+    <button id="newCanvas" type="button">新建净画布</button>
+  </div>
+  <div class="row">
+    <label>缩放 <input id="zoom" type="range" min="1" max="16" value="8"></label>
+    <span id="zoomLabel">8x</span>
+    <label><input id="showIndex" type="checkbox" checked> 显示索引数字</label>
+    <label><input id="checker" type="checkbox" checked> 透明棋盘格</label>
+  </div>
+  <div id="error" role="alert" hidden></div>
+  <div id="status">初始化中…</div>
 </div>
+
 <div id="stage">
-  <canvas id="view"></canvas>
-  <canvas id="overlay"></canvas>
+  <canvas id="view" width="384" height="256" aria-label="索引绘画画布"></canvas>
+  <canvas id="overlay" width="384" height="256"></canvas>
 </div>
-<div id="info">尚未载入项目。选择 .idx.json 文件，或点击“载入内置示例”。</div>
-<h4>调色板（索引 → RGBA）</h4>
-<table id="palette"></table>
 
-<script>
-"use strict";
-let project = null;
-let zoom = 8;
+<div class="panel" style="margin-top:10px; max-width:980px;">
+  <div id="info">尚未移动指针。可直接点击“画横向渐变”，或在渐变工具下从左向右拖动。</div>
+  <p class="hint">图形入口：用浏览器打开 <code>viewer/viewer.html</code>，或在仓库根目录运行
+  <code>python3 -m http.server 8000</code> 后访问 <code>/viewer/viewer.html</code>。
+  命令行 <code>python3 run.py verify</code> 仅作辅助核验。</p>
+</div>
 
-const $ = (id) => document.getElementById(id);
-const view = $("view"), overlay = $("overlay");
-const ctx = view.getContext("2d"), octx = overlay.getContext("2d");
+<div class="panel">
+  <h4>调色板显示边界（点击一行选作单色阶梯；索引 → RGBA）</h4>
+  <table id="palette"></table>
+</div>
 
-function decodeIndices(base64, count) {
-  const bin = atob(base64);
-  const out = new Uint8Array(count);
-  for (let i = 0; i < count; i++) out[i] = bin.charCodeAt(i);
-  return out;
-}
+<div class="panel">
+  <h4>执行证据：实际索引值与导出映射</h4>
+  <pre id="evidence"></pre>
+</div>
 
-function cssColor(entry) {
-  return `rgba(${entry.r},${entry.g},${entry.b},${(entry.a / 255).toFixed(3)})`;
-}
-
-function loadProject(data) {
-  const expected = data.width * data.height;
-  data.indices = decodeIndices(data.indices_base64, expected);
-  project = data;
-  render();
-  renderPalette();
-}
-
-function render() {
-  if (!project) return;
-  const { width: w, height: h, palette, indices, transparent_index } = project;
-  view.width = overlay.width = w * zoom;
-  view.height = overlay.height = h * zoom;
-  octx.clearRect(0, 0, overlay.width, overlay.height);
-
-  // One fillRect per source pixel: integer scaling, never interpolated.
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const e = palette[indices[y * w + x]];
-      ctx.fillStyle = cssColor(e);
-      ctx.fillRect(x * zoom, y * zoom, zoom, zoom);
-    }
-  }
-
-  if ($("showIndex").checked && zoom >= 6) {
-    octx.font = `${Math.max(7, Math.floor(zoom * 0.42))}px monospace`;
-    octx.textAlign = "center";
-    octx.textBaseline = "middle";
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const idx = indices[y * w + x];
-        const e = palette[idx];
-        const lum = (e.r + e.g + e.b) / 3;
-        octx.fillStyle = lum > 140 && e.a > 128 ? "rgba(0,0,0,.75)" : "rgba(255,255,255,.85)";
-        octx.fillText(idx.toString(16), x * zoom + zoom / 2, y * zoom + zoom / 2);
-      }
-    }
-  }
-  view.style.background = $("checker").checked ? "" : "#000";
-}
-
-function renderPalette() {
-  const tbl = $("palette");
-  tbl.innerHTML = "";
-  project.palette.forEach((e, i) => {
-    const tr = document.createElement("tr");
-    const lock = project.locked_indices.includes(i) ? " 🔒" : "";
-    const trans = i === project.transparent_index ? " (透明索引)" : "";
-    tr.innerHTML =
-      `<td>${i}${lock}${trans}</td>` +
-      `<td><span class="swatch" style="background:${cssColor(e)}"></span></td>` +
-      `<td>(${e.r}, ${e.g}, ${e.b}, ${e.a})</td>` +
-      `<td>${e.name ?? ""}</td>`;
-    tbl.appendChild(tr);
-  });
-}
-
-view.addEventListener("mousemove", (ev) => {
-  if (!project) return;
-  const rect = view.getBoundingClientRect();
-  const x = Math.floor((ev.clientX - rect.left) / zoom);
-  const y = Math.floor((ev.clientY - rect.top) / zoom);
-  if (x < 0 || y < 0 || x >= project.width || y >= project.height) return;
-  const idx = project.indices[y * project.width + x];
-  const e = project.palette[idx];
-  $("info").textContent =
-    `坐标 (${x}, ${y})\n索引: ${idx} (0x${idx.toString(16)})` +
-    `${idx === project.transparent_index ? "  [透明索引]" : ""}` +
-    `${project.locked_indices.includes(idx) ? "  [锁色]" : ""}\n` +
-    `RGBA: (${e.r}, ${e.g}, ${e.b}, ${e.a})  名称: ${e.name ?? ""}`;
-});
-
-$("zoom").addEventListener("input", (ev) => {
-  zoom = parseInt(ev.target.value, 10);
-  $("zoomLabel").textContent = zoom + "x";
-  render();
-});
-$("showIndex").addEventListener("change", render);
-$("checker").addEventListener("change", render);
-
-$("file").addEventListener("change", async (ev) => {
-  const f = ev.target.files[0];
-  if (!f) return;
-  loadProject(JSON.parse(await f.text()));
-});
-
-$("loadDemo").addEventListener("click", () => loadProject(DEMO_PROJECT));
-</script>
+<script src="paint-core.js"></script>
+<script src="paint-app.js"></script>
 <script src="demo_data.js"></script>
 </body>
 </html>
